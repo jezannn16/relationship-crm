@@ -110,8 +110,9 @@ Dates use `YYYY-MM-DD`; `today` compares due dates against the selected date and
 ## Development
 
 ```sh
+.venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/python -m unittest discover -v
-ruff check .
+.venv/bin/ruff check .
 ```
 
 CI runs local tests and Ruff on Python 3.11 and 3.13. Telegram behavior tests use synthetic updates and a fake API. A separate opt-in `getMe` probe is available for a real token check; CI has no Telegram secrets and does not contact Telegram.

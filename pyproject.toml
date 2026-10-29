@@ -9,6 +9,9 @@ description = "Local CLI contact and follow-up tracker"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+dev = ["ruff>=0.17,<1"]
+
 [project.scripts]
 relationship-crm = "app:main"
 relationship-crm-telegram = "telegram_bot:main"

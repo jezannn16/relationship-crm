@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "relationship-crm"
+version = "0.1.0"
+description = "Local CLI contact and follow-up tracker"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+relationship-crm = "app:main"
+relationship-crm-telegram = "telegram_bot:main"
+
+[tool.setuptools]
+py-modules = ["app", "migrations", "telegram_api", "telegram_runtime", "telegram_bot"]
+
+[tool.ruff]
+line-length = 100

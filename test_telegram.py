@@ -4,6 +4,7 @@ from unittest.mock import patch
 from app import connect
 from telegram_bot import handle_update
 from telegram_runtime import process_update
+from telegram_api import TelegramAPI
 
 class FakeAPI:
  def __init__(self):self.sent=[]
@@ -13,6 +14,12 @@ def update(uid,chat,text,kind='private'):
  return {'update_id':uid,'message':{'from':{'id':chat},'chat':{'id':chat,'type':kind},'text':text}}
 
 class CRMTelegramTests(unittest.TestCase):
+ def test_live_token_probe_calls_only_get_me(self):
+  calls=[]
+  api=TelegramAPI('123:secret',request_fn=lambda method,params,timeout:(calls.append((method,params)) or {'ok':True,'result':{'id':123,'username':'test_bot'}}))
+  self.assertEqual(api.get_me()['username'],'test_bot')
+  self.assertEqual(calls,[('getMe',{})])
+
  def setUp(self):self.tmp=tempfile.TemporaryDirectory();self.db=connect(Path(self.tmp.name)/'crm.sqlite');self.api=FakeAPI()
  def tearDown(self):self.db.close();self.tmp.cleanup()
  def test_allowlist_private_capture_confirmation_and_scoping(self):

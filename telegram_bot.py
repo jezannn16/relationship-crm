@@ -3,10 +3,9 @@ from __future__ import annotations
 import json,os,re
 from datetime import date,datetime,timedelta,timezone
 from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
-from telegram_runtime import start
 
 CAPTURE_RE=re.compile(r'(?i)(?:встретил(?:ся|ась)? с|поговорил(?:а)? с|met with|talked to)\s+(?P<name>[^,]+?)(?:\s+(?:из\s+(?:компании\s+)?|from\s+)(?P<org>[^,]+?))?,\s*(?:обсудили|обсудил[аи]?|discussed)\s+(?P<note>[^,]+?)(?:,\s*(?:написать|напомнить|follow[- ]?up)\s+(?P<due>[^,]+))?$')
-WEEKDAYS={'понедельник':0,'вторник':1,'среду':2,'среда':2,'четверг':3,'пятницу':4,'пятница':4,'субботу':5,'суббота':5,'воскресенье':6,'воскресенье':6,'monday':0,'tuesday':1,'wednesday':2,'thursday':3,'friday':4,'saturday':5,'sunday':6}
+WEEKDAYS={'понедельник':0,'вторник':1,'среду':2,'среда':2,'четверг':3,'пятницу':4,'пятница':4,'субботу':5,'суббота':5,'воскресенье':6,'monday':0,'tuesday':1,'wednesday':2,'thursday':3,'friday':4,'saturday':5,'sunday':6}
 
 def _zone():
  try:return ZoneInfo(os.environ.get('CRM_TIMEZONE','Europe/Moscow'))

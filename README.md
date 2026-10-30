@@ -108,6 +108,19 @@ Dates use `YYYY-MM-DD`; `today` compares due dates against the selected date and
 
 `edit CONTACT_ID` updates only fields supplied with `--name`, `--email`, `--org`, or `--notes`. `delete-interaction ID --confirm` and `delete-followup ID --confirm` remove one record only when it belongs to the selected `--user`.
 
+Organizations and projects have owner-scoped catalog commands. A contact's existing `organization` text is preserved; adding or editing a contact with `--org` also adds that name to the owner's organization catalog. Renaming a catalog organization updates matching contact organization text. Deletion is confirmed and refused while contacts still reference an organization or project; unassign a project's contacts first.
+
+```sh
+.venv/bin/python app.py --db crm.sqlite3 --user me organization add ExampleCo --notes 'Synthetic account'
+.venv/bin/python app.py --db crm.sqlite3 --user me organization list
+.venv/bin/python app.py --db crm.sqlite3 --user me organization edit ExampleCo --new-name ExampleCo-West
+.venv/bin/python app.py --db crm.sqlite3 --user me project add Launch --description 'Q4 launch'
+.venv/bin/python app.py --db crm.sqlite3 --user me project assign 1 Launch
+.venv/bin/python app.py --db crm.sqlite3 --user me project list
+.venv/bin/python app.py --db crm.sqlite3 --user me project unassign 1 Launch
+.venv/bin/python app.py --db crm.sqlite3 --user me project delete Launch --confirm
+```
+
 Tags can be listed with `tags [CONTACT_ID]`, assigned with `tag CONTACT_ID NAME`, and removed with `untag CONTACT_ID NAME`. The Telegram bot has matching `/tags`, `/tag`, and `/untag` commands.
 
 Daily briefings are disabled until explicitly enabled for an owner. Configure timezone and quiet hours, then queue a briefing from that owner's local data without sending it:

@@ -134,7 +134,10 @@ def handle_update(update,db):
    if not cur.rowcount:return [(chat_id,'That tag is not assigned to this contact.')]
    db.execute('DELETE FROM tags WHERE user_id=? AND name=? AND NOT EXISTS (SELECT 1 FROM contact_tags WHERE tag_id=tags.id)',(uid,bits[1]))
   else:
-   db.execute('INSERT OR IGNORE INTO projects(user_id,name) VALUES(?,?)',(uid,bits[1]));project=db.execute('SELECT id FROM projects WHERE user_id=? AND name=?',(uid,bits[1])).fetchone()[0];db.execute('INSERT OR IGNORE INTO contact_projects(contact_id,project_id) VALUES(?,?)',(cid,project))
+   from app import create_project,assign_project
+   if not db.execute('SELECT 1 FROM projects WHERE user_id=? AND lower(name)=lower(?)',(uid,bits[1].strip())).fetchone():create_project(db,uid,bits[1])
+   try:assign_project(db,uid,cid,bits[1])
+   except ValueError as exc:return [(chat_id,str(exc))]
   _audit(db,uid,'contact.'+command[1:],cid);return [(chat_id,f'{command[1:]} saved.')]
  if command=='/tags':
   bits=arg.split()

@@ -15,6 +15,82 @@ def owned(d,u,cid):
  r=d.execute('SELECT * FROM contacts WHERE id=? AND user_id=?',(cid,u)).fetchone()
  if r is None: raise ValueError('Contact not found for this user')
  return r
+
+def _catalog_name(value,kind):
+ name=value.strip()
+ if not name or len(name)>200:raise ValueError(f'{kind} name must contain 1–200 characters')
+ return name
+
+def create_organization(d,user_id,name,notes=''):
+ name=_catalog_name(name,'Organization')
+ if d.execute('SELECT 1 FROM organizations WHERE user_id=? AND lower(name)=lower(?)',(user_id,name)).fetchone():
+  raise ValueError('Organization already exists for this user')
+ cur=d.execute('INSERT INTO organizations(user_id,name,notes) VALUES(?,?,?)',(user_id,name,notes.strip()))
+ return int(cur.lastrowid)
+
+def update_organization(d,user_id,name,new_name=None,notes=None):
+ row=d.execute('SELECT * FROM organizations WHERE user_id=? AND lower(name)=lower(?)',(user_id,name.strip())).fetchone()
+ if row is None:raise ValueError('Organization not found for this user')
+ changes={}
+ if new_name is not None:
+  value=_catalog_name(new_name,'Organization')
+  duplicate=d.execute('SELECT 1 FROM organizations WHERE user_id=? AND lower(name)=lower(?) AND id<>?',(user_id,value,row['id'])).fetchone()
+  if duplicate:raise ValueError('Organization already exists for this user')
+  changes['name']=value
+ if notes is not None:changes['notes']=notes.strip()
+ if not changes:raise ValueError('Provide --new-name or --notes')
+ if 'name' in changes:
+  d.execute('UPDATE contacts SET organization=? WHERE user_id=? AND lower(organization)=lower(?)',(changes['name'],user_id,row['name']))
+ d.execute('UPDATE organizations SET '+','.join(f'{key}=?' for key in changes)+' WHERE id=? AND user_id=?',(*changes.values(),row['id'],user_id))
+ return int(row['id'])
+
+def delete_organization(d,user_id,name):
+ row=d.execute('SELECT id,name FROM organizations WHERE user_id=? AND lower(name)=lower(?)',(user_id,name.strip())).fetchone()
+ if row is None:raise ValueError('Organization not found for this user')
+ if d.execute('SELECT 1 FROM contacts WHERE user_id=? AND lower(organization)=lower(?) LIMIT 1',(user_id,row['name'])).fetchone():
+  raise ValueError('Organization is assigned to contacts; update those contacts before deleting it')
+ d.execute('DELETE FROM organizations WHERE id=? AND user_id=?',(row['id'],user_id))
+ return int(row['id'])
+
+def create_project(d,user_id,name,description=''):
+ name=_catalog_name(name,'Project')
+ if d.execute('SELECT 1 FROM projects WHERE user_id=? AND lower(name)=lower(?)',(user_id,name)).fetchone():
+  raise ValueError('Project already exists for this user')
+ cur=d.execute('INSERT INTO projects(user_id,name,description) VALUES(?,?,?)',(user_id,name,description.strip()))
+ return int(cur.lastrowid)
+
+def update_project(d,user_id,name,new_name=None,description=None):
+ row=d.execute('SELECT * FROM projects WHERE user_id=? AND lower(name)=lower(?)',(user_id,name.strip())).fetchone()
+ if row is None:raise ValueError('Project not found for this user')
+ changes={}
+ if new_name is not None:
+  value=_catalog_name(new_name,'Project')
+  duplicate=d.execute('SELECT 1 FROM projects WHERE user_id=? AND lower(name)=lower(?) AND id<>?',(user_id,value,row['id'])).fetchone()
+  if duplicate:raise ValueError('Project already exists for this user')
+  changes['name']=value
+ if description is not None:changes['description']=description.strip()
+ if not changes:raise ValueError('Provide --new-name or --description')
+ d.execute('UPDATE projects SET '+','.join(f'{key}=?' for key in changes)+' WHERE id=? AND user_id=?',(*changes.values(),row['id'],user_id))
+ return int(row['id'])
+
+def delete_project(d,user_id,name):
+ row=d.execute('SELECT id,name FROM projects WHERE user_id=? AND lower(name)=lower(?)',(user_id,name.strip())).fetchone()
+ if row is None:raise ValueError('Project not found for this user')
+ if d.execute('SELECT 1 FROM contact_projects cp JOIN contacts c ON c.id=cp.contact_id WHERE c.user_id=? AND cp.project_id=? LIMIT 1',(user_id,row['id'])).fetchone():
+  raise ValueError('Project is assigned to contacts; unassign them before deleting it')
+ d.execute('DELETE FROM projects WHERE id=? AND user_id=?',(row['id'],user_id))
+ return int(row['id'])
+
+def assign_project(d,user_id,contact_id,name,assigned=True):
+ owned(d,user_id,contact_id)
+ project=d.execute('SELECT id FROM projects WHERE user_id=? AND lower(name)=lower(?)',(user_id,name.strip())).fetchone()
+ if project is None:raise ValueError('Project not found for this user')
+ if assigned:
+  d.execute('INSERT OR IGNORE INTO contact_projects(contact_id,project_id) VALUES(?,?)',(contact_id,project['id']))
+ else:
+  d.execute('DELETE FROM contact_projects WHERE contact_id=? AND project_id=?',(contact_id,project['id']))
+ return int(project['id'])
+
 def main():
  p=argparse.ArgumentParser(description='Local relationship CRM');p.add_argument('--db',type=Path,default=DB);p.add_argument('--user',required=True,help='Local owner key; all queries are scoped to it');s=p.add_subparsers(dest='cmd',required=True)
  q=s.add_parser('add');q.add_argument('name');q.add_argument('--email');q.add_argument('--org');q.add_argument('--notes',default='')
@@ -38,19 +114,35 @@ def main():
  s.add_parser('delivery-status',help='List this owner’s persisted Telegram outbox status')
  q=s.add_parser('retry-delivery');q.add_argument('delivery_id',type=int);q.add_argument('--confirm',action='store_true')
  q=s.add_parser('delete-user-data');q.add_argument('--confirm',action='store_true')
+ org=s.add_parser('organization',help='Manage this owner’s organization catalog');orgs=org.add_subparsers(dest='organization_cmd',required=True)
+ q=orgs.add_parser('add');q.add_argument('name');q.add_argument('--notes',default='')
+ orgs.add_parser('list')
+ q=orgs.add_parser('edit');q.add_argument('name');q.add_argument('--new-name');q.add_argument('--notes')
+ q=orgs.add_parser('delete');q.add_argument('name');q.add_argument('--confirm',action='store_true')
+ project=s.add_parser('project',help='Manage projects and contact assignments');projects=project.add_subparsers(dest='project_cmd',required=True)
+ q=projects.add_parser('add');q.add_argument('name');q.add_argument('--description',default='')
+ projects.add_parser('list')
+ q=projects.add_parser('edit');q.add_argument('name');q.add_argument('--new-name');q.add_argument('--description')
+ q=projects.add_parser('delete');q.add_argument('name');q.add_argument('--confirm',action='store_true')
+ q=projects.add_parser('assign');q.add_argument('contact_id',type=int);q.add_argument('name')
+ q=projects.add_parser('unassign');q.add_argument('contact_id',type=int);q.add_argument('name')
  a=p.parse_args();d=connect(a.db);u=a.user
  try:
   if a.cmd=='add':
    name=a.name.strip()
    if not name: raise ValueError('Name is required')
-   dup=d.execute('SELECT id FROM contacts WHERE user_id=? AND ((email IS NOT NULL AND lower(email)=lower(?)) OR (lower(name)=lower(?) AND lower(coalesce(organization,""))=lower(?)))',(u,a.email or '',name,a.org or '')).fetchall()
-   cur=d.execute('INSERT INTO contacts(user_id,name,email,organization,notes,created_at) VALUES(?,?,?,?,?,?)',(u,name,a.email,a.org,a.notes,datetime.now(timezone.utc).isoformat()));audit(d,u,'contact.created',cur.lastrowid);d.commit();print(f'Created contact {cur.lastrowid}; possible duplicate IDs: '+', '.join(str(r['id']) for r in dup))
+   org_value=a.org.strip() if a.org and a.org.strip() else None
+   dup=d.execute('SELECT id FROM contacts WHERE user_id=? AND ((email IS NOT NULL AND lower(email)=lower(?)) OR (lower(name)=lower(?) AND lower(coalesce(organization,""))=lower(?)))',(u,a.email or '',name,org_value or '')).fetchall()
+   if org_value and not d.execute('SELECT 1 FROM organizations WHERE user_id=? AND lower(name)=lower(?)',(u,org_value)).fetchone():create_organization(d,u,org_value)
+   cur=d.execute('INSERT INTO contacts(user_id,name,email,organization,notes,created_at) VALUES(?,?,?,?,?,?)',(u,name,a.email,org_value,a.notes,datetime.now(timezone.utc).isoformat()));audit(d,u,'contact.created',cur.lastrowid);d.commit();print(f'Created contact {cur.lastrowid}; possible duplicate IDs: '+', '.join(str(r['id']) for r in dup))
   elif a.cmd=='edit':
    current=owned(d,u,a.contact_id)
    changes={column:value for column,value in (('name',a.name),('email',a.email),('organization',a.org),('notes',a.notes)) if value is not None}
    if not changes:raise ValueError('Provide at least one field to edit')
    if 'name' in changes and not changes['name'].strip():raise ValueError('Name cannot be empty')
    changes={column:(value.strip() if value is not None else None) for column,value in changes.items()}
+   if changes.get('organization')=='':changes['organization']=None
+   if changes.get('organization') and not d.execute('SELECT 1 FROM organizations WHERE user_id=? AND lower(name)=lower(?)',(u,changes['organization'])).fetchone():create_organization(d,u,changes['organization'])
    d.execute('UPDATE contacts SET '+','.join(f'{column}=?' for column in changes)+' WHERE id=? AND user_id=?',(*changes.values(),a.contact_id,u));audit(d,u,'contact.updated',a.contact_id);d.commit();print(f'Updated contact {current["id"]}')
   elif a.cmd=='search':
    pat='%'+a.query+'%';rows=d.execute('SELECT c.*,max(i.occurred_at) last_contact FROM contacts c LEFT JOIN interactions i ON i.contact_id=c.id AND i.user_id=c.user_id WHERE c.user_id=? AND (c.name LIKE ? OR c.email LIKE ? OR c.organization LIKE ? OR c.notes LIKE ?) GROUP BY c.id ORDER BY c.name',(u,pat,pat,pat,pat)).fetchall();print('\n'.join(f"{r['id']} | {r['name']} | {r['organization'] or ''} | last={r['last_contact'] or 'never'}" for r in rows) or 'No contacts')
@@ -145,6 +237,28 @@ def main():
    cur=d.execute("UPDATE telegram_outbox SET status='queued' WHERE id=? AND chat_id=? AND status='failed' AND attempt_count<?",(a.delivery_id,u,MAX_DELIVERY_ATTEMPTS))
    if cur.rowcount!=1:raise ValueError('Delivery is not a retryable failed item belonging to this user, or its retry limit was reached')
    d.commit();print('Delivery queued for one retry by the bot process')
+  elif a.cmd=='organization':
+   if a.organization_cmd=='add':
+    oid=create_organization(d,u,a.name,a.notes);audit(d,u,'organization.created',oid);d.commit();print(f'Created organization {oid}')
+   elif a.organization_cmd=='list':
+    rows=d.execute('SELECT id,name,notes FROM organizations WHERE user_id=? ORDER BY name',(u,)).fetchall();print('\n'.join(f"{r['id']} | {r['name']} | {r['notes']}" for r in rows) or 'No organizations')
+   elif a.organization_cmd=='edit':
+    oid=update_organization(d,u,a.name,a.new_name,a.notes);audit(d,u,'organization.updated',oid);d.commit();print('Organization updated')
+   else:
+    if not a.confirm:raise ValueError('Repeat with --confirm to delete this organization')
+    oid=delete_organization(d,u,a.name);audit(d,u,'organization.deleted',oid);d.commit();print('Organization deleted')
+  elif a.cmd=='project':
+   if a.project_cmd=='add':
+    pid=create_project(d,u,a.name,a.description);audit(d,u,'project.created',pid);d.commit();print(f'Created project {pid}')
+   elif a.project_cmd=='list':
+    rows=d.execute('SELECT id,name,description FROM projects WHERE user_id=? ORDER BY name',(u,)).fetchall();print('\n'.join(f"{r['id']} | {r['name']} | {r['description']}" for r in rows) or 'No projects')
+   elif a.project_cmd=='edit':
+    pid=update_project(d,u,a.name,a.new_name,a.description);audit(d,u,'project.updated',pid);d.commit();print('Project updated')
+   elif a.project_cmd in ('assign','unassign'):
+    pid=assign_project(d,u,a.contact_id,a.name,a.project_cmd=='assign');audit(d,u,'project.assigned' if a.project_cmd=='assign' else 'project.unassigned',a.contact_id);d.commit();print('Project assignment updated')
+   else:
+    if not a.confirm:raise ValueError('Repeat with --confirm to delete this project')
+    pid=delete_project(d,u,a.name);audit(d,u,'project.deleted',pid);d.commit();print('Project deleted')
  except (ValueError,sqlite3.IntegrityError) as e: p.error(str(e))
  finally:d.close()
 if __name__=='__main__':main()

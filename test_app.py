@@ -84,6 +84,38 @@ class CRMTests(unittest.TestCase):
    self.assertEqual(bundle['tags'],[{'name':'priority'}]);self.assertEqual(bundle['projects'],[{'name':'Synthetic project','description':'Project notes'}])
    self.assertEqual(bundle['organizations'],[{'name':'Synthetic org','notes':'Organization notes'}])
    self.assertNotIn(str(other),out.read_text(encoding='utf-8'))
+
+ def test_organization_and_project_crud_preserves_legacy_contacts_and_is_owner_scoped(self):
+  from app import (assign_project,create_organization,create_project,delete_organization,
+                  delete_project,update_organization,update_project)
+  conn=app.connect(':memory:')
+  conn.execute('INSERT INTO contacts(user_id,name,organization,created_at) VALUES(?,?,?,?)',('alice','Synthetic contact','Old Org','now'))
+  cid=conn.execute('SELECT id FROM contacts WHERE user_id=?',('alice',)).fetchone()[0]
+  oid=create_organization(conn,'alice','Old Org','initial notes')
+  self.assertGreater(oid,0)
+  with self.assertRaisesRegex(ValueError,'already exists'):
+   create_organization(conn,'alice','old org')
+  with self.assertRaisesRegex(ValueError,'not found'):
+   update_organization(conn,'bob','Old Org',new_name='Other Org')
+  update_organization(conn,'alice','Old Org',new_name='Renamed Org',notes='updated')
+  self.assertEqual(conn.execute('SELECT organization FROM contacts WHERE id=?',(cid,)).fetchone()[0],'Renamed Org')
+  with self.assertRaisesRegex(ValueError,'assigned to contacts'):
+   delete_organization(conn,'alice','Renamed Org')
+  create_project(conn,'alice','Launch','Initial scope')
+  with self.assertRaisesRegex(ValueError,'not found'):
+   assign_project(conn,'bob',cid,'Launch')
+  assign_project(conn,'alice',cid,'Launch')
+  with self.assertRaisesRegex(ValueError,'assigned to contacts'):
+   delete_project(conn,'alice','Launch')
+  update_project(conn,'alice','Launch',new_name='Launch 2',description='Revised scope')
+  self.assertEqual(tuple(conn.execute('SELECT name,description FROM projects WHERE user_id=?',('alice',)).fetchone()),('Launch 2','Revised scope'))
+  assign_project(conn,'alice',cid,'Launch 2',assigned=False)
+  delete_project(conn,'alice','Launch 2')
+  conn.execute('UPDATE contacts SET organization=NULL WHERE id=? AND user_id=?',(cid,'alice'))
+  delete_organization(conn,'alice','Renamed Org')
+  self.assertIsNone(conn.execute('SELECT organization FROM contacts WHERE id=?',(cid,)).fetchone()[0])
+  self.assertEqual(conn.execute('SELECT COUNT(*) FROM organizations WHERE user_id=?',('bob',)).fetchone()[0],0)
+  conn.close()
  def test_delete_user_data_requires_confirmation_and_removes_organization(self):
   with tempfile.TemporaryDirectory() as td:
    db=Path(td)/'crm.db';conn=app.connect(db)

@@ -3,6 +3,21 @@ from pathlib import Path
 import app
 import migrations
 class CRMTests(unittest.TestCase):
+ def test_cli_lists_actionable_followup_id_and_completes_only_for_owner(self):
+  with tempfile.TemporaryDirectory() as td:
+   db_path=Path(td)/'crm.db';d=app.connect(db_path)
+   contact=d.execute('INSERT INTO contacts(user_id,name,created_at) VALUES(?,?,?)',('alice','Synthetic follow-up contact','now')).lastrowid
+   followup=d.execute('INSERT INTO followups(user_id,contact_id,note,due_date) VALUES(?,?,?,?)',('alice',contact,'Send the agenda','2026-10-01')).lastrowid;d.commit();d.close()
+   def cli(user,*args):return subprocess.run([sys.executable,'app.py','--db',str(db_path),'--user',user,*args],capture_output=True,text=True)
+   due=cli('alice','today','--date','2026-10-30')
+   self.assertEqual(due.returncode,0,due.stderr);self.assertIn(f'{followup} 2026-10-01 Synthetic follow-up contact: Send the agenda',due.stdout)
+   denied=cli('bob','done',str(followup));self.assertNotEqual(denied.returncode,0);self.assertIn('not found for this user',denied.stderr)
+   completed=cli('alice','done',str(followup));self.assertEqual(completed.returncode,0,completed.stderr)
+   repeated=cli('alice','done',str(followup));self.assertEqual(repeated.returncode,0,repeated.stderr);self.assertIn('already complete',repeated.stdout)
+   self.assertIn('No follow-ups due',cli('alice','today','--date','2026-10-30').stdout)
+   check=app.connect(db_path);self.assertEqual(check.execute('SELECT done FROM followups WHERE id=?',(followup,)).fetchone()['done'],1)
+   self.assertEqual(check.execute("SELECT COUNT(*) FROM audit WHERE user_id='alice' AND event='followup.completed'").fetchone()[0],1);check.close()
+
  def test_edit_contact_and_delete_interaction_and_followup_are_owner_scoped(self):
   with tempfile.TemporaryDirectory() as td:
    db_path=Path(td)/'crm.db';d=app.connect(db_path)

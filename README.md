@@ -40,6 +40,7 @@ Run the synthetic local walkthrough against a temporary database:
 .venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user demo interaction 1 'Discussed the project timeline'
 .venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user demo followup 1 2026-11-02 'Share the timeline'
 .venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user demo today --date 2026-11-02
+.venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user demo done 1
 .venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user other search Anna
 .venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user demo edit 1 --notes 'Updated synthetic note'
 .venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user demo tag 1 customer
@@ -98,11 +99,14 @@ The bot does not search social networks or message CRM contacts. The only outgoi
 # Search, review due items, and export this owner's records.
 .venv/bin/python app.py --db crm.sqlite3 --user me search Anna
 .venv/bin/python app.py --db crm.sqlite3 --user me today
+.venv/bin/python app.py --db crm.sqlite3 --user me done 1
 .venv/bin/python app.py --db crm.sqlite3 --user me export contacts.csv --format csv
 .venv/bin/python app.py --db crm.sqlite3 --user me export owner-data.json --format json
 ```
 
 CSV and Markdown exports include contact-linked interactions, follow-ups, tags, and projects. JSON export is the complete owner-scoped bundle, including unassigned tags, projects with descriptions, and organization records with notes.
+
+`today` prints the follow-up ID, due date, contact, and note for every incomplete item due on or before the selected date. Use `done FOLLOWUP_ID` to complete one of your own items; repeating the command is safe and reports that it is already complete. A different owner cannot complete or inspect it.
 
 Dates use `YYYY-MM-DD`; `today` compares due dates against the selected date and does not send reminders. Merge and delete commands require `--confirm`. `delete-user-data --confirm` removes contacts, interactions, follow-ups, tags, projects, organizations, audit entries, notification keys, briefing settings, and queued bot responses for the chosen owner.
 

@@ -99,6 +99,7 @@ def main():
  q=s.add_parser('interaction');q.add_argument('contact_id',type=int);q.add_argument('note');q.add_argument('--at',default=datetime.now(timezone.utc).date().isoformat())
  q=s.add_parser('followup');q.add_argument('contact_id',type=int);q.add_argument('date');q.add_argument('note')
  q=s.add_parser('today');q.add_argument('--date',default=datetime.now(timezone.utc).date().isoformat())
+ q=s.add_parser('done',help='Mark one of this owner’s follow-ups complete');q.add_argument('followup_id',type=int)
  q=s.add_parser('history');q.add_argument('contact_id',type=int)
  q=s.add_parser('duplicates');q.add_argument('contact_id',type=int)
  q=s.add_parser('merge');q.add_argument('keep',type=int);q.add_argument('remove',type=int);q.add_argument('--confirm',action='store_true')
@@ -152,6 +153,13 @@ def main():
    owned(d,u,a.contact_id);datetime.strptime(a.date,'%Y-%m-%d');d.execute('INSERT INTO followups(user_id,contact_id,note,due_date) VALUES(?,?,?,?)',(u,a.contact_id,a.note,a.date));audit(d,u,'followup.created',a.contact_id);d.commit();print('Follow-up saved')
   elif a.cmd=='today':
    rows=d.execute('SELECT f.id,c.name,f.note,f.due_date FROM followups f JOIN contacts c ON c.id=f.contact_id WHERE f.user_id=? AND c.user_id=? AND f.done=0 AND f.due_date<=? ORDER BY f.due_date',(u,u,a.date)).fetchall();print('\n'.join(f"{r['id']} {r['due_date']} {r['name']}: {r['note']}" for r in rows) or 'No follow-ups due')
+  elif a.cmd=='done':
+   row=d.execute('SELECT done FROM followups WHERE id=? AND user_id=?',(a.followup_id,u)).fetchone()
+   if row is None:raise ValueError('Follow-up not found for this user')
+   if row['done']:
+    print('Follow-up is already complete')
+   else:
+    d.execute('UPDATE followups SET done=1 WHERE id=? AND user_id=? AND done=0',(a.followup_id,u));audit(d,u,'followup.completed',a.followup_id);d.commit();print('Follow-up marked complete')
   elif a.cmd=='history':
    owned(d,u,a.contact_id);rows=d.execute('SELECT occurred_at,note FROM interactions WHERE user_id=? AND contact_id=? ORDER BY occurred_at DESC',(u,a.contact_id)).fetchall();print('\n'.join(f"{r['occurred_at']}: {r['note']}" for r in rows) or 'No interactions')
   elif a.cmd=='duplicates':

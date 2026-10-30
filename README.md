@@ -97,7 +97,7 @@ The bot does not search social networks or message CRM contacts. The only outgoi
 .venv/bin/python app.py --db crm.sqlite3 --user me export contacts.csv --format csv
 ```
 
-Dates use `YYYY-MM-DD`; `today` compares due dates against the selected date and does not send reminders. Merge and delete commands require `--confirm`. `delete-user-data --confirm` removes all local CRM records for the chosen owner.
+Dates use `YYYY-MM-DD`; `today` compares due dates against the selected date and does not send reminders. Merge and delete commands require `--confirm`. `delete-user-data --confirm` removes contacts, interactions, follow-ups, tags, projects, organizations, audit entries, notification keys, and queued bot responses for the chosen owner.
 
 ## Privacy and limits
 
@@ -105,7 +105,7 @@ Dates use `YYYY-MM-DD`; `today` compares due dates against the selected date and
 - Telegram polling requests only message updates. It sends an answer to the same chat for accepted private messages, including access-denied responses for non-allowlisted users who message the bot.
 - Only numeric IDs in `CRM_ALLOWED_USER_IDS` can use CRM commands. Group messages are ignored. Keep the bot private and configure the allowlist before launch.
 - The outbox uses at-most-once delivery. A `failed` or `uncertain` entry may need manual inspection; a retry can duplicate a bot response.
-- Reminders appear in `/briefing`; scheduled push notifications, hosted multi-user service, social scraping, and contact messaging are not implemented.
+- `/briefing` lists due or overdue follow-ups and contacts with no interaction for 90 days; `/briefing 30` changes the stale threshold. Scheduled push notifications, hosted multi-user service, social scraping, and contact messaging are not implemented.
 
 ## Development
 

@@ -58,7 +58,7 @@ def main():
     columns=['id','name','email','organization','notes','created_at','interactions_json','followups_json']
     with a.file.open('w',encoding='utf-8',newline='') as f:
      w=csv.DictWriter(f,fieldnames=columns);w.writeheader()
-     for item in records:w.writerow({**item,'interactions_json':json.dumps(item['interactions'],ensure_ascii=False),'followups_json':json.dumps(item['followups'],ensure_ascii=False)})
+     for item in records:w.writerow({'id':item['id'],'name':item['name'],'email':item['email'],'organization':item['organization'],'notes':item['notes'],'created_at':item['created_at'],'interactions_json':json.dumps(item['interactions'],ensure_ascii=False),'followups_json':json.dumps(item['followups'],ensure_ascii=False)})
    else:
     lines=[]
     for item in records:
@@ -67,7 +67,7 @@ def main():
    audit(d,u,'data.exported');d.commit();print(f'Exported {len(rows)} contacts, interactions and follow-ups')
   elif a.cmd=='delete-user-data':
    if not a.confirm:raise ValueError('Repeat with --confirm to delete all of this user data')
-   ids=[r[0] for r in d.execute('SELECT id FROM contacts WHERE user_id=?',(u,))];d.execute('DELETE FROM audit WHERE user_id=?',(u,));d.executemany('DELETE FROM contacts WHERE id=? AND user_id=?',[(cid,u) for cid in ids]);d.execute('DELETE FROM interactions WHERE user_id=?',(u,));d.execute('DELETE FROM followups WHERE user_id=?',(u,));d.execute('DELETE FROM pending_actions WHERE user_id=?',(u,));d.execute('DELETE FROM tags WHERE user_id=?',(u,));d.execute('DELETE FROM projects WHERE user_id=?',(u,));d.commit();print(f'Deleted {len(ids)} contact(s) and related records')
+   ids=[r[0] for r in d.execute('SELECT id FROM contacts WHERE user_id=?',(u,))];d.execute('DELETE FROM audit WHERE user_id=?',(u,));d.executemany('DELETE FROM contacts WHERE id=? AND user_id=?',[(cid,u) for cid in ids]);d.execute('DELETE FROM interactions WHERE user_id=?',(u,));d.execute('DELETE FROM followups WHERE user_id=?',(u,));d.execute('DELETE FROM pending_actions WHERE user_id=?',(u,));d.execute('DELETE FROM tags WHERE user_id=?',(u,));d.execute('DELETE FROM projects WHERE user_id=?',(u,));d.execute('DELETE FROM organizations WHERE user_id=?',(u,));d.execute('DELETE FROM notification_log WHERE user_id=?',(u,));d.execute('DELETE FROM telegram_outbox WHERE chat_id=?',(u,));d.commit();print(f'Deleted {len(ids)} contact(s) and related records')
   elif a.cmd=='delete':
    owned(d,u,a.contact_id)
    if not a.confirm:raise ValueError('Repeat with --confirm to delete contact and related records')

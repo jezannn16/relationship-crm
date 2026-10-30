@@ -1,4 +1,4 @@
-import tempfile,unittest
+import tempfile,unittest,csv,subprocess,sys
 from pathlib import Path
 import app
 class CRMTests(unittest.TestCase):
@@ -12,4 +12,27 @@ class CRMTests(unittest.TestCase):
  def test_followup_date_validation(self):
   from datetime import datetime
   with self.assertRaises(ValueError):datetime.strptime('tomorrow','%Y-%m-%d')
+ def test_cli_csv_export_includes_related_records(self):
+  with tempfile.TemporaryDirectory() as td:
+   db=Path(td)/'crm.db';out=Path(td)/'contacts.csv';conn=app.connect(db)
+   cid=conn.execute('INSERT INTO contacts(user_id,name,created_at) VALUES(?,?,?)',('demo','Synthetic','now')).lastrowid
+   conn.execute('INSERT INTO interactions(user_id,contact_id,note,occurred_at) VALUES(?,?,?,?)',('demo',cid,'Met','now'))
+   conn.execute('INSERT INTO followups(user_id,contact_id,note,due_date) VALUES(?,?,?,?)',('demo',cid,'Call','2026-11-01'));conn.commit();conn.close()
+   result=subprocess.run([sys.executable,'app.py','--db',str(db),'--user','demo','export',str(out)],capture_output=True,text=True)
+   self.assertEqual(result.returncode,0,result.stderr)
+   with out.open(encoding='utf-8',newline='') as file:row=next(csv.DictReader(file))
+   self.assertIn('Met',row['interactions_json']);self.assertIn('Call',row['followups_json'])
+ def test_delete_user_data_requires_confirmation_and_removes_organization(self):
+  with tempfile.TemporaryDirectory() as td:
+   db=Path(td)/'crm.db';conn=app.connect(db)
+   conn.execute('INSERT INTO organizations(user_id,name) VALUES(?,?)',('demo','Synthetic org'));conn.execute('INSERT INTO contacts(user_id,name,created_at) VALUES(?,?,?)',('demo','Synthetic','now'));conn.commit();conn.close()
+   conn=app.connect(db);conn.execute('INSERT INTO notification_log(user_id,notification_key,sent_at) VALUES(?,?,?)',('demo','briefing:2026-01-01','now'));conn.execute("INSERT INTO telegram_outbox(update_id,sequence,chat_id,text,created_at) VALUES(1,0,'demo','Synthetic private output','now')");conn.commit();conn.close()
+   denied=subprocess.run([sys.executable,'app.py','--db',str(db),'--user','demo','delete-user-data'],capture_output=True,text=True)
+   self.assertNotEqual(denied.returncode,0)
+   done=subprocess.run([sys.executable,'app.py','--db',str(db),'--user','demo','delete-user-data','--confirm'],capture_output=True,text=True)
+   self.assertEqual(done.returncode,0,done.stderr);check=app.connect(db)
+   self.assertEqual(check.execute('SELECT COUNT(*) FROM organizations WHERE user_id=?',('demo',)).fetchone()[0],0)
+   self.assertEqual(check.execute('SELECT COUNT(*) FROM contacts WHERE user_id=?',('demo',)).fetchone()[0],0)
+   self.assertEqual(check.execute('SELECT COUNT(*) FROM notification_log WHERE user_id=?',('demo',)).fetchone()[0],0)
+   self.assertEqual(check.execute('SELECT COUNT(*) FROM telegram_outbox WHERE chat_id=?',('demo',)).fetchone()[0],0);check.close()
 if __name__=='__main__':unittest.main()

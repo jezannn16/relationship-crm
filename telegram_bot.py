@@ -109,9 +109,19 @@ def handle_update(update,db):
   except ValueError:return [(chat_id,'Usage: /done FOLLOWUP_ID')]
   cur=db.execute('UPDATE followups SET done=1 WHERE id=? AND user_id=?',(fid,uid));return [(chat_id,'Follow-up marked complete.' if cur.rowcount else 'Follow-up not found.')]
  if command in ('/followups','/briefing'):
-  today=datetime.now(_zone()).date().isoformat();rows=db.execute('SELECT f.id,c.name,f.note,f.due_date FROM followups f JOIN contacts c ON c.id=f.contact_id WHERE f.user_id=? AND c.user_id=? AND f.done=0 AND f.due_date<=? ORDER BY f.due_date LIMIT 20',(uid,uid,today)).fetchall()
-  body='Due or overdue follow-ups:\n'+'\n'.join(f"#{r['id']} {r['due_date']} {r['name']}: {r['note']}" for r in rows) if rows else 'No follow-ups due today.'
-  return [(chat_id,body)]
+  bits=arg.split()
+  try:stale_days=int(bits[0]) if bits else 90
+  except ValueError:return [(chat_id,'Usage: /briefing [stale-days, default 90]')]
+  if stale_days<1 or stale_days>3650:return [(chat_id,'Stale-days must be between 1 and 3650.')]
+  today=datetime.now(_zone()).date();today_text=today.isoformat();cutoff=(today-timedelta(days=stale_days)).isoformat()
+  rows=db.execute('SELECT f.id,c.name,f.note,f.due_date FROM followups f JOIN contacts c ON c.id=f.contact_id WHERE f.user_id=? AND c.user_id=? AND f.done=0 AND f.due_date<=? ORDER BY f.due_date LIMIT 20',(uid,uid,today_text)).fetchall()
+  stale=db.execute('''SELECT c.id,c.name,COALESCE(MAX(i.occurred_at),c.created_at) AS last_contact
+    FROM contacts c LEFT JOIN interactions i ON i.contact_id=c.id AND i.user_id=c.user_id
+    WHERE c.user_id=? GROUP BY c.id HAVING substr(last_contact,1,10)<=? ORDER BY last_contact LIMIT 20''',(uid,cutoff)).fetchall()
+  due_lines=[f"#{r['id']} {r['due_date']} {r['name']}: {r['note']}" for r in rows]
+  stale_lines=[f"#{r['id']} {r['name']}: last interaction {r['last_contact'][:10]}" for r in stale]
+  sections=[f'Follow-ups due or overdue:\n{chr(10).join(due_lines) if due_lines else "None"}',f'No interaction in {stale_days}+ days:\n{chr(10).join(stale_lines) if stale_lines else "None"}']
+  return [(chat_id,'\n\n'.join(sections)[:3900])]
  if command in ('/tag','/project'):
   bits=arg.split(maxsplit=1)
   if len(bits)!=2:return [(chat_id,f'Usage: {command} CONTACT_ID NAME')]

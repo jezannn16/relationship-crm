@@ -41,4 +41,10 @@ class CRMTelegramTests(unittest.TestCase):
  def test_schema_migrations_are_recorded(self):
   versions=[r[0] for r in self.db.execute('select version from schema_migrations order by version')]
   self.assertEqual(versions,[1,2,3]);self.assertIsNotNone(self.db.execute('select 1 from sqlite_master where name="contact_projects"').fetchone())
+ def test_briefing_includes_due_and_stale_contacts_scoped_to_user(self):
+  with patch.dict(os.environ,{'CRM_ALLOWED_USER_IDS':'101','CRM_TIMEZONE':'Europe/Moscow'}):
+   self.db.execute('INSERT INTO contacts(user_id,name,created_at) VALUES(?,?,?)',('101','Synthetic stale','2000-01-01T00:00:00+00:00'))
+   self.db.execute('INSERT INTO contacts(user_id,name,created_at) VALUES(?,?,?)',('202','Other user','2000-01-01T00:00:00+00:00'))
+   result=handle_update(update(20,101,'/briefing 30'),self.db)[0][1]
+   self.assertIn('Synthetic stale',result);self.assertNotIn('Other user',result);self.assertIn('Follow-ups due or overdue',result)
 if __name__=='__main__':unittest.main()

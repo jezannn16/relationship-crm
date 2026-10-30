@@ -26,7 +26,7 @@ def main():
  q=s.add_parser('history');q.add_argument('contact_id',type=int)
  q=s.add_parser('duplicates');q.add_argument('contact_id',type=int)
  q=s.add_parser('merge');q.add_argument('keep',type=int);q.add_argument('remove',type=int);q.add_argument('--confirm',action='store_true')
- q=s.add_parser('export');q.add_argument('file',type=Path);q.add_argument('--format',choices=['csv','markdown'],default='csv')
+ q=s.add_parser('export');q.add_argument('file',type=Path);q.add_argument('--format',choices=['csv','markdown','json'],default='csv')
  q=s.add_parser('delete');q.add_argument('contact_id',type=int);q.add_argument('--confirm',action='store_true')
  q=s.add_parser('delete-interaction');q.add_argument('interaction_id',type=int);q.add_argument('--confirm',action='store_true')
  q=s.add_parser('delete-followup');q.add_argument('followup_id',type=int);q.add_argument('--confirm',action='store_true')
@@ -72,18 +72,26 @@ def main():
   elif a.cmd=='export':
    rows=d.execute('SELECT id,name,email,organization,notes,created_at FROM contacts WHERE user_id=? ORDER BY id',(u,)).fetchall();records=[]
    for row in rows:
-    item=dict(row);item['interactions']=[dict(x) for x in d.execute('SELECT occurred_at,note FROM interactions WHERE user_id=? AND contact_id=? ORDER BY occurred_at',(u,row['id']))];item['followups']=[dict(x) for x in d.execute('SELECT note,due_date,done FROM followups WHERE user_id=? AND contact_id=? ORDER BY due_date',(u,row['id']))];records.append(item)
-   if a.format=='csv':
-    columns=['id','name','email','organization','notes','created_at','interactions_json','followups_json']
+    item=dict(row);item['interactions']=[dict(x) for x in d.execute('SELECT occurred_at,note FROM interactions WHERE user_id=? AND contact_id=? ORDER BY occurred_at',(u,row['id']))];item['followups']=[dict(x) for x in d.execute('SELECT note,due_date,done FROM followups WHERE user_id=? AND contact_id=? ORDER BY due_date',(u,row['id']))]
+    item['tags']=[x['name'] for x in d.execute('SELECT t.name FROM tags t JOIN contact_tags ct ON ct.tag_id=t.id JOIN contacts c ON c.id=ct.contact_id WHERE t.user_id=? AND c.user_id=? AND c.id=? ORDER BY t.name',(u,u,row['id']))]
+    item['projects']=[x['name'] for x in d.execute('SELECT p.name FROM projects p JOIN contact_projects cp ON cp.project_id=p.id JOIN contacts c ON c.id=cp.contact_id WHERE p.user_id=? AND c.user_id=? AND c.id=? ORDER BY p.name',(u,u,row['id']))]
+    records.append(item)
+   if a.format=='json':
+    bundle={'contacts':records,'tags':[dict(x) for x in d.execute('SELECT name FROM tags WHERE user_id=? ORDER BY name',(u,))],
+            'projects':[dict(x) for x in d.execute('SELECT name,description FROM projects WHERE user_id=? ORDER BY name',(u,))],
+            'organizations':[dict(x) for x in d.execute('SELECT name,notes FROM organizations WHERE user_id=? ORDER BY name',(u,))]}
+    a.file.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8')
+   elif a.format=='csv':
+    columns=['id','name','email','organization','notes','created_at','interactions_json','followups_json','tags_json','projects_json']
     with a.file.open('w',encoding='utf-8',newline='') as f:
      w=csv.DictWriter(f,fieldnames=columns);w.writeheader()
-     for item in records:w.writerow({'id':item['id'],'name':item['name'],'email':item['email'],'organization':item['organization'],'notes':item['notes'],'created_at':item['created_at'],'interactions_json':json.dumps(item['interactions'],ensure_ascii=False),'followups_json':json.dumps(item['followups'],ensure_ascii=False)})
+     for item in records:w.writerow({'id':item['id'],'name':item['name'],'email':item['email'],'organization':item['organization'],'notes':item['notes'],'created_at':item['created_at'],'interactions_json':json.dumps(item['interactions'],ensure_ascii=False),'followups_json':json.dumps(item['followups'],ensure_ascii=False),'tags_json':json.dumps(item['tags'],ensure_ascii=False),'projects_json':json.dumps(item['projects'],ensure_ascii=False)})
    else:
     lines=[]
     for item in records:
-     r=item;lines.append(f"- **{r['name']}** — {r['organization'] or ''}; {r['email'] or ''}; {r['notes']}\n  - Interactions: "+('; '.join(x['note'] for x in item['interactions']) or 'none')+"\n  - Follow-ups: "+('; '.join(f"{x['due_date']} {x['note']} {'(done)' if x['done'] else ''}" for x in item['followups']) or 'none'))
+     r=item;lines.append(f"- **{r['name']}** — {r['organization'] or ''}; {r['email'] or ''}; {r['notes']}\n  - Tags: "+(', '.join(item['tags']) or 'none')+"\n  - Projects: "+(', '.join(item['projects']) or 'none')+"\n  - Interactions: "+('; '.join(x['note'] for x in item['interactions']) or 'none')+"\n  - Follow-ups: "+('; '.join(f"{x['due_date']} {x['note']} {'(done)' if x['done'] else ''}" for x in item['followups']) or 'none'))
     a.file.write_text('# Contacts\n\n'+'\n'.join(lines),encoding='utf-8')
-   audit(d,u,'data.exported');d.commit();print(f'Exported {len(rows)} contacts, interactions and follow-ups')
+   audit(d,u,'data.exported');d.commit();print(f'Exported {len(rows)} contacts with related interactions, follow-ups, tags and projects')
   elif a.cmd=='delete-user-data':
    if not a.confirm:raise ValueError('Repeat with --confirm to delete all of this user data')
    ids=[r[0] for r in d.execute('SELECT id FROM contacts WHERE user_id=?',(u,))];d.execute('DELETE FROM audit WHERE user_id=?',(u,));d.executemany('DELETE FROM contacts WHERE id=? AND user_id=?',[(cid,u) for cid in ids]);d.execute('DELETE FROM interactions WHERE user_id=?',(u,));d.execute('DELETE FROM followups WHERE user_id=?',(u,));d.execute('DELETE FROM pending_actions WHERE user_id=?',(u,));d.execute('DELETE FROM tags WHERE user_id=?',(u,));d.execute('DELETE FROM projects WHERE user_id=?',(u,));d.execute('DELETE FROM organizations WHERE user_id=?',(u,));d.execute('DELETE FROM notification_log WHERE user_id=?',(u,));d.execute('DELETE FROM briefing_settings WHERE user_id=?',(u,));d.execute('DELETE FROM telegram_outbox WHERE chat_id=?',(u,));d.commit();print(f'Deleted {len(ids)} contact(s) and related records')

@@ -1,4 +1,4 @@
-import tempfile,unittest,csv,subprocess,sys,sqlite3
+import tempfile,unittest,csv,subprocess,sys,sqlite3,json
 from pathlib import Path
 import app
 import migrations
@@ -64,6 +64,26 @@ class CRMTests(unittest.TestCase):
    self.assertEqual(result.returncode,0,result.stderr)
    with out.open(encoding='utf-8',newline='') as file:row=next(csv.DictReader(file))
    self.assertIn('Met',row['interactions_json']);self.assertIn('Call',row['followups_json'])
+ def test_json_export_preserves_owner_catalog_and_contact_links_without_cross_user_data(self):
+  with tempfile.TemporaryDirectory() as td:
+   db=Path(td)/'crm.db';out=Path(td)/'owner.json';conn=app.connect(db)
+   cid=conn.execute('INSERT INTO contacts(user_id,name,created_at) VALUES(?,?,?)',('alice','Synthetic Alice','now')).lastrowid
+   other=conn.execute('INSERT INTO contacts(user_id,name,created_at) VALUES(?,?,?)',('bob','Synthetic Bob','now')).lastrowid
+   tag=conn.execute('INSERT INTO tags(user_id,name) VALUES(?,?)',('alice','priority')).lastrowid
+   conn.execute('INSERT INTO tags(user_id,name) VALUES(?,?)',('bob','private-tag'))
+   project=conn.execute('INSERT INTO projects(user_id,name,description) VALUES(?,?,?)',('alice','Synthetic project','Project notes')).lastrowid
+   conn.execute('INSERT INTO projects(user_id,name) VALUES(?,?)',('bob','Other project'))
+   conn.execute('INSERT INTO contact_tags(contact_id,tag_id) VALUES(?,?)',(cid,tag))
+   conn.execute('INSERT INTO contact_projects(contact_id,project_id) VALUES(?,?)',(cid,project))
+   conn.execute('INSERT INTO organizations(user_id,name,notes) VALUES(?,?,?)',('alice','Synthetic org','Organization notes'))
+   conn.execute('INSERT INTO organizations(user_id,name) VALUES(?,?)',('bob','Other org'));conn.commit();conn.close()
+   result=subprocess.run([sys.executable,'app.py','--db',str(db),'--user','alice','export',str(out),'--format','json'],capture_output=True,text=True)
+   self.assertEqual(result.returncode,0,result.stderr);bundle=json.loads(out.read_text(encoding='utf-8'))
+   self.assertEqual([r['name'] for r in bundle['contacts']],['Synthetic Alice'])
+   self.assertEqual(bundle['contacts'][0]['tags'],['priority']);self.assertEqual(bundle['contacts'][0]['projects'],['Synthetic project'])
+   self.assertEqual(bundle['tags'],[{'name':'priority'}]);self.assertEqual(bundle['projects'],[{'name':'Synthetic project','description':'Project notes'}])
+   self.assertEqual(bundle['organizations'],[{'name':'Synthetic org','notes':'Organization notes'}])
+   self.assertNotIn(str(other),out.read_text(encoding='utf-8'))
  def test_delete_user_data_requires_confirmation_and_removes_organization(self):
   with tempfile.TemporaryDirectory() as td:
    db=Path(td)/'crm.db';conn=app.connect(db)

@@ -25,10 +25,11 @@
 
 ## Quick start
 
-Python 3.11 or newer is required. Create an isolated environment:
+Python 3.11 or newer is required. Check that `python3 --version` reports a supported version; if your system's `python3` is older, use the explicit path to an installed Python 3.11+ executable in the venv command. Create an isolated environment:
 
 ```sh
 python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e .
 ```
 
@@ -98,7 +99,10 @@ The bot does not search social networks or message CRM contacts. The only outgoi
 .venv/bin/python app.py --db crm.sqlite3 --user me search Anna
 .venv/bin/python app.py --db crm.sqlite3 --user me today
 .venv/bin/python app.py --db crm.sqlite3 --user me export contacts.csv --format csv
+.venv/bin/python app.py --db crm.sqlite3 --user me export owner-data.json --format json
 ```
+
+CSV and Markdown exports include contact-linked interactions, follow-ups, tags, and projects. JSON export is the complete owner-scoped bundle, including unassigned tags, projects with descriptions, and organization records with notes.
 
 Dates use `YYYY-MM-DD`; `today` compares due dates against the selected date and does not send reminders. Merge and delete commands require `--confirm`. `delete-user-data --confirm` removes contacts, interactions, follow-ups, tags, projects, organizations, audit entries, notification keys, briefing settings, and queued bot responses for the chosen owner.
 

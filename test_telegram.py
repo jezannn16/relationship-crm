@@ -38,6 +38,19 @@ class CRMTelegramTests(unittest.TestCase):
    u=update(10,101,'/add Alice | alice@example.test | Acme')
    self.assertTrue(process_update(self.db,self.api,handle_update,u));self.assertFalse(process_update(self.db,self.api,handle_update,u))
    self.assertEqual(self.db.execute('select count(*) from contacts').fetchone()[0],1);self.assertEqual(len(self.api.sent),1)
+ def test_outbox_claim_lost_to_another_worker_does_not_send_twice(self):
+  from telegram_runtime import flush_outbox
+  self.db.execute("INSERT INTO telegram_outbox(update_id,sequence,chat_id,text,created_at,status) VALUES(?,?,?,?,?,'queued')",(90,0,'101','synthetic response','now'));self.db.commit()
+  class RacingDB:
+   raced=False
+   def commit(inner):self.db.commit()
+   def execute(inner,sql,args=()):
+    result=self.db.execute(sql,args)
+    if sql.startswith('SELECT * FROM telegram_outbox') and not inner.raced:
+     inner.raced=True;self.db.execute("UPDATE telegram_outbox SET status='sent' WHERE update_id=90");self.db.commit()
+    return result
+  flush_outbox(RacingDB(),self.api)
+  self.assertEqual(self.api.sent,[])
  def test_schema_migrations_are_recorded(self):
   versions=[r[0] for r in self.db.execute('select version from schema_migrations order by version')]
   self.assertEqual(versions,[1,2,3]);self.assertIsNotNone(self.db.execute('select 1 from sqlite_master where name="contact_projects"').fetchone())

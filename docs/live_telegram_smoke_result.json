@@ -1,0 +1,13 @@
+{
+  "tested_at_utc": "2026-10-30",
+  "project": "Relationship CRM",
+  "synthetic_updates": 3,
+  "update_sources": "constructed locally; no Telegram polling or getUpdates",
+  "destination_guard": "single allowlisted ID; updates and sendMessage destination checked in process",
+  "maximum_network_send_attempts": 3,
+  "observed": "Telegram delivery result was uncertain; live command did not reach its final verification/report step",
+  "exact_send_attempt_count": "unverified",
+  "outbox_state": "unverified because final DB inspection was not reached",
+  "outcome": "inconclusive; no retry was made",
+  "temporary_database": "not present after the run"
+}

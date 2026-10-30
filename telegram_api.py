@@ -5,6 +5,7 @@ from urllib.error import HTTPError,URLError
 from urllib.request import Request,urlopen
 
 class TelegramAPIError(RuntimeError): pass
+class TelegramDeliveryUncertain(TelegramAPIError): pass
 
 class TelegramAPI:
     def __init__(self,token:str,request_fn=None):
@@ -19,8 +20,11 @@ class TelegramAPI:
             try:body=json.loads(exc.read())
             except Exception:body={}
             if exc.code==429:return body or {'ok':False,'parameters':{'retry_after':1}}
+            if method=='sendMessage' and exc.code>=500:raise TelegramDeliveryUncertain('Telegram delivery result is uncertain') from None
             raise TelegramAPIError('Telegram request failed') from None
-        except (URLError,TimeoutError,OSError,ValueError):raise TelegramAPIError('Telegram request failed') from None
+        except (URLError,TimeoutError,OSError,ValueError):
+            error=TelegramDeliveryUncertain if method=='sendMessage' else TelegramAPIError
+            raise error('Telegram request failed; delivery may be uncertain' if method=='sendMessage' else 'Telegram request failed') from None
     def call(self,method,params,timeout=15):
         for attempt in range(2):
             result=self._request_fn(method,params,timeout)
@@ -28,6 +32,8 @@ class TelegramAPI:
             retry=result.get('parameters',{}).get('retry_after')
             if result.get('error_code')==429 and attempt==0 and isinstance(retry,(int,float)):
                 time.sleep(min(max(retry,0),30));continue
+            if method=='sendMessage' and isinstance(result.get('error_code'),int) and result['error_code']>=500:
+                raise TelegramDeliveryUncertain('Telegram delivery result is uncertain')
             raise TelegramAPIError('Telegram API returned an error')
         raise TelegramAPIError('Telegram API rate limit retry exhausted')
     def get_updates(self,offset,timeout=20):

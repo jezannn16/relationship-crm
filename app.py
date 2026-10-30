@@ -1,10 +1,12 @@
 """Single-user-local CRM with explicit owner scoping and auditable destructive actions."""
 from __future__ import annotations
-import argparse,csv,json,sqlite3
+import argparse,csv,json,os,sqlite3
 from migrations import connect as connect_db
 from datetime import datetime,timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
 DB=Path(__file__).with_name('crm.sqlite3')
+MAX_DELIVERY_ATTEMPTS=3
 def connect(path=DB):
  return connect_db(path)
 
@@ -28,6 +30,13 @@ def main():
  q=s.add_parser('delete');q.add_argument('contact_id',type=int);q.add_argument('--confirm',action='store_true')
  q=s.add_parser('delete-interaction');q.add_argument('interaction_id',type=int);q.add_argument('--confirm',action='store_true')
  q=s.add_parser('delete-followup');q.add_argument('followup_id',type=int);q.add_argument('--confirm',action='store_true')
+ q=s.add_parser('tag');q.add_argument('contact_id',type=int);q.add_argument('name')
+ q=s.add_parser('untag');q.add_argument('contact_id',type=int);q.add_argument('name')
+ q=s.add_parser('tags');q.add_argument('contact_id',type=int,nargs='?')
+ q=s.add_parser('briefing-config');g=q.add_mutually_exclusive_group();g.add_argument('--enable',dest='enabled',action='store_true');g.add_argument('--disable',dest='enabled',action='store_false');q.set_defaults(enabled=None);q.add_argument('--timezone');q.add_argument('--quiet-start');q.add_argument('--quiet-end');q.add_argument('--stale-days',type=int)
+ s.add_parser('dispatch-briefings',help='Queue enabled local-time briefings; does not send them')
+ s.add_parser('delivery-status',help='List this owner’s persisted Telegram outbox status')
+ q=s.add_parser('retry-delivery');q.add_argument('delivery_id',type=int);q.add_argument('--confirm',action='store_true')
  q=s.add_parser('delete-user-data');q.add_argument('--confirm',action='store_true')
  a=p.parse_args();d=connect(a.db);u=a.user
  try:
@@ -77,7 +86,7 @@ def main():
    audit(d,u,'data.exported');d.commit();print(f'Exported {len(rows)} contacts, interactions and follow-ups')
   elif a.cmd=='delete-user-data':
    if not a.confirm:raise ValueError('Repeat with --confirm to delete all of this user data')
-   ids=[r[0] for r in d.execute('SELECT id FROM contacts WHERE user_id=?',(u,))];d.execute('DELETE FROM audit WHERE user_id=?',(u,));d.executemany('DELETE FROM contacts WHERE id=? AND user_id=?',[(cid,u) for cid in ids]);d.execute('DELETE FROM interactions WHERE user_id=?',(u,));d.execute('DELETE FROM followups WHERE user_id=?',(u,));d.execute('DELETE FROM pending_actions WHERE user_id=?',(u,));d.execute('DELETE FROM tags WHERE user_id=?',(u,));d.execute('DELETE FROM projects WHERE user_id=?',(u,));d.execute('DELETE FROM organizations WHERE user_id=?',(u,));d.execute('DELETE FROM notification_log WHERE user_id=?',(u,));d.execute('DELETE FROM telegram_outbox WHERE chat_id=?',(u,));d.commit();print(f'Deleted {len(ids)} contact(s) and related records')
+   ids=[r[0] for r in d.execute('SELECT id FROM contacts WHERE user_id=?',(u,))];d.execute('DELETE FROM audit WHERE user_id=?',(u,));d.executemany('DELETE FROM contacts WHERE id=? AND user_id=?',[(cid,u) for cid in ids]);d.execute('DELETE FROM interactions WHERE user_id=?',(u,));d.execute('DELETE FROM followups WHERE user_id=?',(u,));d.execute('DELETE FROM pending_actions WHERE user_id=?',(u,));d.execute('DELETE FROM tags WHERE user_id=?',(u,));d.execute('DELETE FROM projects WHERE user_id=?',(u,));d.execute('DELETE FROM organizations WHERE user_id=?',(u,));d.execute('DELETE FROM notification_log WHERE user_id=?',(u,));d.execute('DELETE FROM briefing_settings WHERE user_id=?',(u,));d.execute('DELETE FROM telegram_outbox WHERE chat_id=?',(u,));d.commit();print(f'Deleted {len(ids)} contact(s) and related records')
   elif a.cmd=='delete':
    owned(d,u,a.contact_id)
    if not a.confirm:raise ValueError('Repeat with --confirm to delete contact and related records')
@@ -88,6 +97,46 @@ def main():
    row=d.execute(f'SELECT contact_id FROM {table} WHERE id=? AND user_id=?',(record_id,u)).fetchone()
    if row is None:raise ValueError('Record not found for this user')
    d.execute(f'DELETE FROM {table} WHERE id=? AND user_id=?',(record_id,u));audit(d,u,a.cmd+'.deleted',row['contact_id']);d.commit();print('Deleted')
+  elif a.cmd=='tag':
+   owned(d,u,a.contact_id);name=a.name.strip()
+   if not name or len(name)>80:raise ValueError('Tag must contain 1–80 characters')
+   d.execute('INSERT OR IGNORE INTO tags(user_id,name) VALUES(?,?)',(u,name));tag=d.execute('SELECT id FROM tags WHERE user_id=? AND name=?',(u,name)).fetchone()
+   d.execute('INSERT OR IGNORE INTO contact_tags(contact_id,tag_id) VALUES(?,?)',(a.contact_id,tag['id']));audit(d,u,'contact.tagged',a.contact_id);d.commit();print('Tag assigned')
+  elif a.cmd=='untag':
+   owned(d,u,a.contact_id);cur=d.execute('DELETE FROM contact_tags WHERE contact_id=? AND tag_id IN (SELECT id FROM tags WHERE user_id=? AND name=?)',(a.contact_id,u,a.name.strip()))
+   if not cur.rowcount:raise ValueError('Tag is not assigned to this contact')
+   d.execute('DELETE FROM tags WHERE user_id=? AND name=? AND NOT EXISTS (SELECT 1 FROM contact_tags WHERE tag_id=tags.id)',(u,a.name.strip()))
+   audit(d,u,'contact.untagged',a.contact_id);d.commit();print('Tag removed')
+  elif a.cmd=='tags':
+   if a.contact_id is None:rows=d.execute('SELECT name,COUNT(ct.contact_id) contact_count FROM tags t LEFT JOIN contact_tags ct ON ct.tag_id=t.id WHERE t.user_id=? GROUP BY t.id ORDER BY t.name',(u,)).fetchall()
+   else:
+    owned(d,u,a.contact_id);rows=d.execute('SELECT t.name FROM tags t JOIN contact_tags ct ON ct.tag_id=t.id WHERE t.user_id=? AND ct.contact_id=? ORDER BY t.name',(u,a.contact_id)).fetchall()
+   print('\n'.join(f"{r['name']}"+(f" ({r['contact_count']} contacts)" if 'contact_count' in r.keys() else '') for r in rows) or 'No tags')
+  elif a.cmd=='briefing-config':
+   existing=d.execute('SELECT * FROM briefing_settings WHERE user_id=?',(u,)).fetchone()
+   zone=a.timezone or (existing['timezone'] if existing else os.environ.get('CRM_TIMEZONE','Europe/Moscow'))
+   try:ZoneInfo(zone)
+   except (ZoneInfoNotFoundError,ValueError):raise ValueError('Timezone must be a valid IANA timezone, such as Europe/Moscow') from None
+   quiet_start=a.quiet_start or (existing['quiet_start'] if existing else '22:00');quiet_end=a.quiet_end or (existing['quiet_end'] if existing else '08:00')
+   from briefing_scheduler import in_quiet_hours
+   in_quiet_hours(datetime(2026,1,1,12,0,tzinfo=ZoneInfo(zone)),quiet_start,quiet_end)
+   stale_days=a.stale_days if a.stale_days is not None else (existing['stale_days'] if existing else 90)
+   if not 1<=stale_days<=3650:raise ValueError('Stale-days must be between 1 and 3650')
+   enabled=int(a.enabled if a.enabled is not None else (existing['enabled'] if existing else 0))
+   d.execute('''INSERT INTO briefing_settings(user_id,timezone,quiet_start,quiet_end,stale_days,enabled) VALUES(?,?,?,?,?,?)
+    ON CONFLICT(user_id) DO UPDATE SET timezone=excluded.timezone,quiet_start=excluded.quiet_start,quiet_end=excluded.quiet_end,stale_days=excluded.stale_days,enabled=excluded.enabled''',(u,zone,quiet_start,quiet_end,stale_days,enabled));d.commit()
+   print(json.dumps({'user_id':u,'timezone':zone,'quiet_hours':[quiet_start,quiet_end],'stale_days':stale_days,'enabled':bool(enabled)},ensure_ascii=False))
+  elif a.cmd=='dispatch-briefings':
+   from briefing_scheduler import enqueue_due_briefings
+   count=enqueue_due_briefings(d);print(f'Queued {count} briefing(s). No messages were sent; active bot polling delivers the persisted outbox.')
+  elif a.cmd=='delivery-status':
+   rows=d.execute('SELECT id,status,attempt_count,created_at,sent_at,dedupe_key FROM telegram_outbox WHERE chat_id=? ORDER BY id DESC LIMIT 100',(u,)).fetchall()
+   print(json.dumps([dict(r) for r in rows],ensure_ascii=False,indent=2))
+  elif a.cmd=='retry-delivery':
+   if not a.confirm:raise ValueError('Repeat with --confirm to retry a definite failed delivery')
+   cur=d.execute("UPDATE telegram_outbox SET status='queued' WHERE id=? AND chat_id=? AND status='failed' AND attempt_count<?",(a.delivery_id,u,MAX_DELIVERY_ATTEMPTS))
+   if cur.rowcount!=1:raise ValueError('Delivery is not a retryable failed item belonging to this user, or its retry limit was reached')
+   d.commit();print('Delivery queued for one retry by the bot process')
  except (ValueError,sqlite3.IntegrityError) as e: p.error(str(e))
  finally:d.close()
 if __name__=='__main__':main()

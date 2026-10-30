@@ -41,6 +41,8 @@ Run the synthetic local walkthrough against a temporary database:
 .venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user demo today --date 2026-11-02
 .venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user other search Anna
 .venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user demo edit 1 --notes 'Updated synthetic note'
+.venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user demo tag 1 customer
+.venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user demo tags
 ```
 
 The final search is empty because every CLI query is scoped to its `--user`. The dates and contact are synthetic; use a future or current date to try your own follow-up.
@@ -98,17 +100,29 @@ The bot does not search social networks or message CRM contacts. The only outgoi
 .venv/bin/python app.py --db crm.sqlite3 --user me export contacts.csv --format csv
 ```
 
-Dates use `YYYY-MM-DD`; `today` compares due dates against the selected date and does not send reminders. Merge and delete commands require `--confirm`. `delete-user-data --confirm` removes contacts, interactions, follow-ups, tags, projects, organizations, audit entries, notification keys, and queued bot responses for the chosen owner.
+Dates use `YYYY-MM-DD`; `today` compares due dates against the selected date and does not send reminders. Merge and delete commands require `--confirm`. `delete-user-data --confirm` removes contacts, interactions, follow-ups, tags, projects, organizations, audit entries, notification keys, briefing settings, and queued bot responses for the chosen owner.
 
 `edit CONTACT_ID` updates only fields supplied with `--name`, `--email`, `--org`, or `--notes`. `delete-interaction ID --confirm` and `delete-followup ID --confirm` remove one record only when it belongs to the selected `--user`.
+
+Tags can be listed with `tags [CONTACT_ID]`, assigned with `tag CONTACT_ID NAME`, and removed with `untag CONTACT_ID NAME`. The Telegram bot has matching `/tags`, `/tag`, and `/untag` commands.
+
+Daily briefings are disabled until explicitly enabled for an owner. Configure timezone and quiet hours, then queue a briefing from that owner's local data without sending it:
+
+```sh
+.venv/bin/python app.py --db crm.sqlite3 --user me briefing-config --enable --timezone Europe/Moscow --quiet-start 22:00 --quiet-end 08:00 --stale-days 90
+.venv/bin/python app.py --db crm.sqlite3 --user me dispatch-briefings
+.venv/bin/python app.py --db crm.sqlite3 --user me delivery-status
+```
+
+The dispatcher only writes to the durable outbox. An already-running, explicitly configured Telegram bot delivers queued entries; it checks schedule/timezone/quiet hours after each poll cycle. The local date is the deduplication key. Definite failed delivery can be retried with `retry-delivery ID --confirm`, up to three attempts total; timeouts or server errors are marked `uncertain` and cannot be retried through this command because Telegram may already have accepted the message.
 
 ## Privacy and limits
 
 - Contact details, notes, interaction history, and follow-ups are stored in SQLite on this machine. Protect the database, backups, and exports as personal data.
 - Telegram polling requests only message updates. It sends an answer to the same chat for accepted private messages, including access-denied responses for non-allowlisted users who message the bot.
 - Only numeric IDs in `CRM_ALLOWED_USER_IDS` can use CRM commands. Group messages are ignored. Keep the bot private and configure the allowlist before launch.
-- The outbox uses at-most-once delivery. A `failed` or `uncertain` entry may need manual inspection; a retry can duplicate a bot response.
-- `/briefing` lists due or overdue follow-ups and contacts with no interaction for 90 days; `/briefing 30` changes the stale threshold. Scheduled push notifications, hosted multi-user service, social scraping, and contact messaging are not implemented.
+- The outbox uses at-most-once handling. Only Telegram API responses classified as definite failures can be manually retried. Network timeouts and server errors become `uncertain` and are never retried automatically because Telegram may already have accepted the message. Attempts and outcomes persist in SQLite.
+- `/briefing` lists due or overdue follow-ups and contacts with no interaction for 90 days; `/briefing 30` changes the stale threshold. Opt-in daily delivery uses the persisted outbox and respects per-owner timezone/quiet hours. Hosted multi-user service, social scraping, and contact messaging are not implemented.
 
 ## Development
 

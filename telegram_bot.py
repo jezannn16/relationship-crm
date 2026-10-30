@@ -38,7 +38,7 @@ def handle_update(update,db):
  if len(text)>3000:return [(chat_id,'Message is too long. Keep it under 3000 characters.')]
  parts=text.split(maxsplit=1);command=parts[0].split('@',1)[0].lower();arg=parts[1].strip() if len(parts)>1 else ''
  if command in ('/start','/help'):
-  return [(chat_id,'Relationship CRM commands: /contacts, /search NAME, /capture <meeting note>, /confirm, /cancel, /add NAME | EMAIL | ORG, /log ID NOTE, /followup ID YYYY-MM-DD NOTE, /history ID, /briefing, /done FOLLOWUP_ID, /tag ID TAG, /project ID NAME, /duplicates ID, /merge KEEP REMOVE, /delete ID, /export. Dates are in CRM_TIMEZONE. Messages are never sent to contacts.')]
+  return [(chat_id,'Relationship CRM commands: /contacts, /search NAME, /capture <meeting note>, /confirm, /cancel, /add NAME | EMAIL | ORG, /log ID NOTE, /followup ID YYYY-MM-DD NOTE, /history ID, /briefing, /done FOLLOWUP_ID, /tag ID TAG, /untag ID TAG, /tags [ID], /project ID NAME, /duplicates ID, /merge KEEP REMOVE, /delete ID, /export. Dates are in CRM_TIMEZONE. Messages are never sent to contacts.')]
  if command=='/contacts':
   rows=db.execute('SELECT id,name,organization FROM contacts WHERE user_id=? ORDER BY name LIMIT 20',(uid,)).fetchall()
   return [(chat_id,'\n'.join(f"{r['id']}: {r['name']} — {r['organization'] or 'no organization'}" for r in rows) or 'No contacts yet.')]
@@ -122,16 +122,28 @@ def handle_update(update,db):
   stale_lines=[f"#{r['id']} {r['name']}: last interaction {r['last_contact'][:10]}" for r in stale]
   sections=[f'Follow-ups due or overdue:\n{chr(10).join(due_lines) if due_lines else "None"}',f'No interaction in {stale_days}+ days:\n{chr(10).join(stale_lines) if stale_lines else "None"}']
   return [(chat_id,'\n\n'.join(sections)[:3900])]
- if command in ('/tag','/project'):
+ if command in ('/tag','/project','/untag'):
   bits=arg.split(maxsplit=1)
   if len(bits)!=2:return [(chat_id,f'Usage: {command} CONTACT_ID NAME')]
   try:cid=int(bits[0]);_owned(db,uid,cid)
   except ValueError:return [(chat_id,'Contact not found.')]
   if command=='/tag':
    db.execute('INSERT OR IGNORE INTO tags(user_id,name) VALUES(?,?)',(uid,bits[1]));tag=db.execute('SELECT id FROM tags WHERE user_id=? AND name=?',(uid,bits[1])).fetchone()[0];db.execute('INSERT OR IGNORE INTO contact_tags(contact_id,tag_id) VALUES(?,?)',(cid,tag))
+  elif command=='/untag':
+   cur=db.execute('DELETE FROM contact_tags WHERE contact_id=? AND tag_id IN (SELECT id FROM tags WHERE user_id=? AND name=?)',(cid,uid,bits[1]))
+   if not cur.rowcount:return [(chat_id,'That tag is not assigned to this contact.')]
+   db.execute('DELETE FROM tags WHERE user_id=? AND name=? AND NOT EXISTS (SELECT 1 FROM contact_tags WHERE tag_id=tags.id)',(uid,bits[1]))
   else:
    db.execute('INSERT OR IGNORE INTO projects(user_id,name) VALUES(?,?)',(uid,bits[1]));project=db.execute('SELECT id FROM projects WHERE user_id=? AND name=?',(uid,bits[1])).fetchone()[0];db.execute('INSERT OR IGNORE INTO contact_projects(contact_id,project_id) VALUES(?,?)',(cid,project))
   _audit(db,uid,'contact.'+command[1:],cid);return [(chat_id,f'{command[1:]} saved.')]
+ if command=='/tags':
+  bits=arg.split()
+  if bits:
+   try:cid=int(bits[0]);_owned(db,uid,cid)
+   except (ValueError,TypeError):return [(chat_id,'Contact not found.')]
+   rows=db.execute('SELECT t.name FROM tags t JOIN contact_tags ct ON ct.tag_id=t.id WHERE t.user_id=? AND ct.contact_id=? ORDER BY t.name',(uid,cid)).fetchall()
+  else:rows=db.execute('SELECT name FROM tags WHERE user_id=? ORDER BY name',(uid,)).fetchall()
+  return [(chat_id,'\n'.join(r['name'] for r in rows) or 'No tags.')]
  if command=='/duplicates':
   try:cid=int(arg);c=_owned(db,uid,cid)
   except ValueError:return [(chat_id,'Contact not found.')]

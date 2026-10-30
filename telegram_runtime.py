@@ -2,21 +2,25 @@
 from __future__ import annotations
 import logging,time
 from datetime import datetime,timezone
-from telegram_api import TelegramAPI,TelegramAPIError
+from telegram_api import TelegramAPI,TelegramAPIError,TelegramDeliveryUncertain
 
 logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s')
 
 def flush_outbox(db,api):
  rows=db.execute("SELECT * FROM telegram_outbox WHERE status='queued' ORDER BY id").fetchall()
  for row in rows:
-  claimed=db.execute("UPDATE telegram_outbox SET status='sending' WHERE id=? AND status='queued'",(row['id'],))
+  claimed=db.execute("UPDATE telegram_outbox SET status='sending',attempt_count=attempt_count+1 WHERE id=? AND status='queued'",(row['id'],))
   db.commit()
   if claimed.rowcount != 1: continue
   try:api.send_message(row['chat_id'],row['text'])
+  except TelegramDeliveryUncertain:
+   db.execute("UPDATE telegram_outbox SET status='uncertain' WHERE id=?",(row['id'],));db.commit();logging.warning('Telegram delivery result is uncertain; inspect before retrying')
   except TelegramAPIError:
    db.execute("UPDATE telegram_outbox SET status='failed' WHERE id=?",(row['id'],));db.commit();logging.warning('Telegram delivery failed; response retained in local outbox')
   else:
    db.execute("UPDATE telegram_outbox SET status='sent',sent_at=? WHERE id=?",(datetime.now(timezone.utc).isoformat(),row['id']));db.commit()
+   if row['notification_key']:
+    db.execute('INSERT OR IGNORE INTO notification_log(user_id,notification_key,sent_at) VALUES(?,?,?)',(row['chat_id'],row['notification_key'],datetime.now(timezone.utc).isoformat()));db.commit()
 
 def process_update(db,api,handler,update):
  uid=int(update.get('update_id',-1))
@@ -33,12 +37,15 @@ def process_update(db,api,handler,update):
  db.commit();flush_outbox(db,api);return True
 
 def run_polling(db,api,handler):
+ from briefing_scheduler import enqueue_due_briefings
  db.execute("UPDATE telegram_outbox SET status='uncertain' WHERE status='sending'");db.commit()
+ enqueue_due_briefings(db)
  flush_outbox(db,api)
  row=db.execute('SELECT COALESCE(MAX(update_id),0) FROM bot_updates').fetchone();offset=int(row[0])+1
  while True:
   try:updates=api.get_updates(offset)
   except TelegramAPIError:
+   enqueue_due_briefings(db);flush_outbox(db,api)
    logging.warning('Telegram polling failed; retrying with bounded delay');time.sleep(3);continue
   for update in updates:
    uid=int(update.get('update_id',-1))
@@ -47,6 +54,8 @@ def run_polling(db,api,handler):
    except Exception:
     logging.error('CRM update handler failed; update will be retried');break
    offset=max(offset,uid+1)
+  enqueue_due_briefings(db)
+  flush_outbox(db,api)
 
 def start(db_path,handler):
  import os

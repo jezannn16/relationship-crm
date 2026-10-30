@@ -4,7 +4,7 @@ from unittest.mock import patch
 from app import connect
 from telegram_bot import handle_update
 from telegram_runtime import process_update
-from telegram_api import TelegramAPI
+from telegram_api import TelegramAPI,TelegramDeliveryUncertain
 
 class FakeAPI:
  def __init__(self):self.sent=[]
@@ -19,6 +19,13 @@ class CRMTelegramTests(unittest.TestCase):
   api=TelegramAPI('123:secret',request_fn=lambda method,params,timeout:(calls.append((method,params)) or {'ok':True,'result':{'id':123,'username':'test_bot'}}))
   self.assertEqual(api.get_me()['username'],'test_bot')
   self.assertEqual(calls,[('getMe',{})])
+ def test_send_network_timeout_is_classified_uncertain(self):
+  from unittest.mock import patch
+  api=TelegramAPI('123:synthetic')
+  with patch('telegram_api.urlopen',side_effect=TimeoutError()):
+   with self.assertRaises(TelegramDeliveryUncertain):api.send_message('101','synthetic response')
+  api=TelegramAPI('123:synthetic',request_fn=lambda *args:{'ok':False,'error_code':500})
+  with self.assertRaises(TelegramDeliveryUncertain):api.send_message('101','synthetic response')
 
  def setUp(self):self.tmp=tempfile.TemporaryDirectory();self.db=connect(Path(self.tmp.name)/'crm.sqlite');self.api=FakeAPI()
  def tearDown(self):self.db.close();self.tmp.cleanup()
@@ -53,7 +60,8 @@ class CRMTelegramTests(unittest.TestCase):
   self.assertEqual(self.api.sent,[])
  def test_schema_migrations_are_recorded(self):
   versions=[r[0] for r in self.db.execute('select version from schema_migrations order by version')]
-  self.assertEqual(versions,[1,2,3]);self.assertIsNotNone(self.db.execute('select 1 from sqlite_master where name="contact_projects"').fetchone())
+  self.assertEqual(versions,[1,2,3,4]);self.assertIsNotNone(self.db.execute('select 1 from sqlite_master where name="contact_projects"').fetchone())
+  self.assertIsNotNone(self.db.execute('select 1 from sqlite_master where name="briefing_settings"').fetchone())
  def test_briefing_includes_due_and_stale_contacts_scoped_to_user(self):
   with patch.dict(os.environ,{'CRM_ALLOWED_USER_IDS':'101','CRM_TIMEZONE':'Europe/Moscow'}):
    self.db.execute('INSERT INTO contacts(user_id,name,created_at) VALUES(?,?,?)',('101','Synthetic stale','2000-01-01T00:00:00+00:00'))

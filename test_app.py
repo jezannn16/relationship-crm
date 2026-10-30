@@ -1,6 +1,7 @@
-import tempfile,unittest,csv,subprocess,sys
+import tempfile,unittest,csv,subprocess,sys,sqlite3
 from pathlib import Path
 import app
+import migrations
 class CRMTests(unittest.TestCase):
  def test_edit_contact_and_delete_interaction_and_followup_are_owner_scoped(self):
   with tempfile.TemporaryDirectory() as td:
@@ -21,6 +22,28 @@ class CRMTests(unittest.TestCase):
    self.assertEqual(check.execute('SELECT COUNT(*) FROM interactions').fetchone()[0],0)
    self.assertEqual(check.execute('SELECT COUNT(*) FROM followups').fetchone()[0],0)
    check.close()
+ def test_tag_assign_remove_and_listing_are_owner_scoped(self):
+  with tempfile.TemporaryDirectory() as td:
+   db_path=Path(td)/'crm.db';d=app.connect(db_path)
+   contact=d.execute('INSERT INTO contacts(user_id,name,created_at) VALUES(?,?,?)',('alice','Synthetic tagged contact','now')).lastrowid;d.commit();d.close()
+   def cli(user,*args):return subprocess.run([sys.executable,'app.py','--db',str(db_path),'--user',user,*args],capture_output=True,text=True)
+   self.assertEqual(cli('alice','tag',str(contact),'priority').returncode,0)
+   self.assertIn('priority',cli('alice','tags').stdout)
+   self.assertNotIn('priority',cli('bob','tags').stdout)
+   self.assertNotEqual(cli('bob','untag',str(contact),'priority').returncode,0)
+   self.assertEqual(cli('alice','untag',str(contact),'priority').returncode,0)
+   self.assertNotIn('priority',cli('alice','tags').stdout)
+ def test_upgrade_from_v3_adds_scheduler_and_outbox_columns(self):
+  with tempfile.TemporaryDirectory() as td:
+   path=Path(td)/'old.sqlite3';old=sqlite3.connect(path)
+   old.execute('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)')
+   for version,migration in enumerate((migrations._v1,migrations._v2,migrations._v3),1):
+    migration(old);old.execute('INSERT INTO schema_migrations VALUES(?,?)',(version,'synthetic'))
+   old.commit();old.close();upgraded=app.connect(path)
+   cols={r['name'] for r in upgraded.execute('PRAGMA table_info(telegram_outbox)')}
+   self.assertTrue({'attempt_count','dedupe_key','notification_key'}<=cols)
+   self.assertEqual(upgraded.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0],4)
+   upgraded.close()
  def test_owner_scope_and_confirmed_merge(self):
   with tempfile.TemporaryDirectory() as td:
    d=app.connect(Path(td)/'crm.db');a=d.execute('insert into contacts(user_id,name,created_at) values(?,?,?)',('u1','Anna','now')).lastrowid;b=d.execute('insert into contacts(user_id,name,created_at) values(?,?,?)',('u1','Anna','now')).lastrowid
@@ -45,7 +68,7 @@ class CRMTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as td:
    db=Path(td)/'crm.db';conn=app.connect(db)
    conn.execute('INSERT INTO organizations(user_id,name) VALUES(?,?)',('demo','Synthetic org'));conn.execute('INSERT INTO contacts(user_id,name,created_at) VALUES(?,?,?)',('demo','Synthetic','now'));conn.commit();conn.close()
-   conn=app.connect(db);conn.execute('INSERT INTO notification_log(user_id,notification_key,sent_at) VALUES(?,?,?)',('demo','briefing:2026-01-01','now'));conn.execute("INSERT INTO telegram_outbox(update_id,sequence,chat_id,text,created_at) VALUES(1,0,'demo','Synthetic private output','now')");conn.commit();conn.close()
+   conn=app.connect(db);conn.execute('INSERT INTO notification_log(user_id,notification_key,sent_at) VALUES(?,?,?)',('demo','briefing:2026-01-01','now'));conn.execute("INSERT INTO telegram_outbox(update_id,sequence,chat_id,text,created_at) VALUES(1,0,'demo','Synthetic private output','now')");conn.execute("INSERT INTO briefing_settings(user_id,timezone) VALUES('demo','Europe/Moscow')");conn.commit();conn.close()
    denied=subprocess.run([sys.executable,'app.py','--db',str(db),'--user','demo','delete-user-data'],capture_output=True,text=True)
    self.assertNotEqual(denied.returncode,0)
    done=subprocess.run([sys.executable,'app.py','--db',str(db),'--user','demo','delete-user-data','--confirm'],capture_output=True,text=True)
@@ -53,5 +76,6 @@ class CRMTests(unittest.TestCase):
    self.assertEqual(check.execute('SELECT COUNT(*) FROM organizations WHERE user_id=?',('demo',)).fetchone()[0],0)
    self.assertEqual(check.execute('SELECT COUNT(*) FROM contacts WHERE user_id=?',('demo',)).fetchone()[0],0)
    self.assertEqual(check.execute('SELECT COUNT(*) FROM notification_log WHERE user_id=?',('demo',)).fetchone()[0],0)
+   self.assertEqual(check.execute('SELECT COUNT(*) FROM briefing_settings WHERE user_id=?',('demo',)).fetchone()[0],0)
    self.assertEqual(check.execute('SELECT COUNT(*) FROM telegram_outbox WHERE chat_id=?',('demo',)).fetchone()[0],0);check.close()
 if __name__=='__main__':unittest.main()

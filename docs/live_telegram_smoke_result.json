@@ -1,13 +1,32 @@
 {
-  "tested_at_utc": "2026-10-30",
   "project": "Relationship CRM",
-  "synthetic_updates": 3,
-  "update_sources": "constructed locally; no Telegram polling or getUpdates",
-  "destination_guard": "single allowlisted ID; updates and sendMessage destination checked in process",
-  "maximum_network_send_attempts": 3,
-  "observed": "Telegram delivery result was uncertain; live command did not reach its final verification/report step",
-  "exact_send_attempt_count": "unverified",
-  "outbox_state": "unverified because final DB inspection was not reached",
-  "outcome": "inconclusive; no retry was made",
-  "temporary_database": "not present after the run"
+  "attempts": [
+    {
+      "synthetic_updates": 3,
+      "update_sources": "constructed locally; no Telegram polling or getUpdates",
+      "destination_guard": "single allowlisted ID; updates and sendMessage destination checked in process",
+      "maximum_network_send_attempts": 3,
+      "observed": "Telegram delivery result was uncertain; live command did not reach its final verification/report step",
+      "exact_send_attempt_count": "unverified",
+      "outbox_state": "unverified because final DB inspection was not reached",
+      "outcome": "inconclusive; no retry was made",
+      "temporary_database": "not present after the run",
+      "attempt": "earlier synthetic Telegram delivery attempt",
+      "tested_at_utc": "2026-10-30"
+    },
+    {
+      "attempt": "synthetic private /start update",
+      "tested_at_utc": "2026-10-30",
+      "update_source": "constructed locally; no getUpdates or polling",
+      "destination_guard": "sender and private chat matched the sole configured allowlisted ID; ID not recorded",
+      "send_attempts": 1,
+      "transport_result": "accepted by Telegram API",
+      "outbox_status": "sent",
+      "outbox_attempt_count": 1,
+      "temporary_database": "inspected in finally, result record verified, then removed",
+      "result": "confirmed /start delivery only",
+      "scope_limit": "No contact creation, capture, or other CRM workflow was exercised."
+    }
+  ],
+  "notes": "The earlier inconclusive delivery was not retried. The later isolated /start smoke used a fresh temporary SQLite database and one synthetic private update. No identifiers or credentials are stored here."
 }

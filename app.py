@@ -16,6 +16,7 @@ def owned(d,u,cid):
 def main():
  p=argparse.ArgumentParser(description='Local relationship CRM');p.add_argument('--db',type=Path,default=DB);p.add_argument('--user',required=True,help='Local owner key; all queries are scoped to it');s=p.add_subparsers(dest='cmd',required=True)
  q=s.add_parser('add');q.add_argument('name');q.add_argument('--email');q.add_argument('--org');q.add_argument('--notes',default='')
+ q=s.add_parser('edit');q.add_argument('contact_id',type=int);q.add_argument('--name');q.add_argument('--email');q.add_argument('--org');q.add_argument('--notes')
  q=s.add_parser('search');q.add_argument('query',nargs='?',default='')
  q=s.add_parser('interaction');q.add_argument('contact_id',type=int);q.add_argument('note');q.add_argument('--at',default=datetime.now(timezone.utc).date().isoformat())
  q=s.add_parser('followup');q.add_argument('contact_id',type=int);q.add_argument('date');q.add_argument('note')
@@ -25,6 +26,8 @@ def main():
  q=s.add_parser('merge');q.add_argument('keep',type=int);q.add_argument('remove',type=int);q.add_argument('--confirm',action='store_true')
  q=s.add_parser('export');q.add_argument('file',type=Path);q.add_argument('--format',choices=['csv','markdown'],default='csv')
  q=s.add_parser('delete');q.add_argument('contact_id',type=int);q.add_argument('--confirm',action='store_true')
+ q=s.add_parser('delete-interaction');q.add_argument('interaction_id',type=int);q.add_argument('--confirm',action='store_true')
+ q=s.add_parser('delete-followup');q.add_argument('followup_id',type=int);q.add_argument('--confirm',action='store_true')
  q=s.add_parser('delete-user-data');q.add_argument('--confirm',action='store_true')
  a=p.parse_args();d=connect(a.db);u=a.user
  try:
@@ -33,6 +36,13 @@ def main():
    if not name: raise ValueError('Name is required')
    dup=d.execute('SELECT id FROM contacts WHERE user_id=? AND ((email IS NOT NULL AND lower(email)=lower(?)) OR (lower(name)=lower(?) AND lower(coalesce(organization,""))=lower(?)))',(u,a.email or '',name,a.org or '')).fetchall()
    cur=d.execute('INSERT INTO contacts(user_id,name,email,organization,notes,created_at) VALUES(?,?,?,?,?,?)',(u,name,a.email,a.org,a.notes,datetime.now(timezone.utc).isoformat()));audit(d,u,'contact.created',cur.lastrowid);d.commit();print(f'Created contact {cur.lastrowid}; possible duplicate IDs: '+', '.join(str(r['id']) for r in dup))
+  elif a.cmd=='edit':
+   current=owned(d,u,a.contact_id)
+   changes={column:value for column,value in (('name',a.name),('email',a.email),('organization',a.org),('notes',a.notes)) if value is not None}
+   if not changes:raise ValueError('Provide at least one field to edit')
+   if 'name' in changes and not changes['name'].strip():raise ValueError('Name cannot be empty')
+   changes={column:(value.strip() if value is not None else None) for column,value in changes.items()}
+   d.execute('UPDATE contacts SET '+','.join(f'{column}=?' for column in changes)+' WHERE id=? AND user_id=?',(*changes.values(),a.contact_id,u));audit(d,u,'contact.updated',a.contact_id);d.commit();print(f'Updated contact {current["id"]}')
   elif a.cmd=='search':
    pat='%'+a.query+'%';rows=d.execute('SELECT c.*,max(i.occurred_at) last_contact FROM contacts c LEFT JOIN interactions i ON i.contact_id=c.id AND i.user_id=c.user_id WHERE c.user_id=? AND (c.name LIKE ? OR c.email LIKE ? OR c.organization LIKE ? OR c.notes LIKE ?) GROUP BY c.id ORDER BY c.name',(u,pat,pat,pat,pat)).fetchall();print('\n'.join(f"{r['id']} | {r['name']} | {r['organization'] or ''} | last={r['last_contact'] or 'never'}" for r in rows) or 'No contacts')
   elif a.cmd=='interaction':
@@ -72,6 +82,12 @@ def main():
    owned(d,u,a.contact_id)
    if not a.confirm:raise ValueError('Repeat with --confirm to delete contact and related records')
    d.execute('DELETE FROM contacts WHERE id=? AND user_id=?',(a.contact_id,u));audit(d,u,'contact.deleted',a.contact_id);d.commit();print('Deleted contact and related records')
+  elif a.cmd in ('delete-interaction','delete-followup'):
+   if not a.confirm:raise ValueError('Repeat with --confirm to delete this record')
+   table='interactions' if a.cmd=='delete-interaction' else 'followups';record_id=a.interaction_id if a.cmd=='delete-interaction' else a.followup_id
+   row=d.execute(f'SELECT contact_id FROM {table} WHERE id=? AND user_id=?',(record_id,u)).fetchone()
+   if row is None:raise ValueError('Record not found for this user')
+   d.execute(f'DELETE FROM {table} WHERE id=? AND user_id=?',(record_id,u));audit(d,u,a.cmd+'.deleted',row['contact_id']);d.commit();print('Deleted')
  except (ValueError,sqlite3.IntegrityError) as e: p.error(str(e))
  finally:d.close()
 if __name__=='__main__':main()

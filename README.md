@@ -40,6 +40,7 @@ Run the synthetic local walkthrough against a temporary database:
 .venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user demo followup 1 2026-11-02 'Share the timeline'
 .venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user demo today --date 2026-11-02
 .venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user other search Anna
+.venv/bin/python app.py --db /tmp/crm-demo.sqlite3 --user demo edit 1 --notes 'Updated synthetic note'
 ```
 
 The final search is empty because every CLI query is scoped to its `--user`. The dates and contact are synthetic; use a future or current date to try your own follow-up.
@@ -98,6 +99,8 @@ The bot does not search social networks or message CRM contacts. The only outgoi
 ```
 
 Dates use `YYYY-MM-DD`; `today` compares due dates against the selected date and does not send reminders. Merge and delete commands require `--confirm`. `delete-user-data --confirm` removes contacts, interactions, follow-ups, tags, projects, organizations, audit entries, notification keys, and queued bot responses for the chosen owner.
+
+`edit CONTACT_ID` updates only fields supplied with `--name`, `--email`, `--org`, or `--notes`. `delete-interaction ID --confirm` and `delete-followup ID --confirm` remove one record only when it belongs to the selected `--user`.
 
 ## Privacy and limits
 
